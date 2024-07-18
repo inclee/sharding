@@ -3,6 +3,7 @@ package sharding
 import (
 	"context"
 	"database/sql"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -23,6 +24,10 @@ func (pool ConnPool) PrepareContext(ctx context.Context, query string) (*sql.Stm
 }
 
 func (pool ConnPool) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	var (
+		curTime = time.Now()
+	)
+
 	ftQuery, stQuery, table, err := pool.sharding.resolve(query, args...)
 	if err != nil {
 		return nil, err
@@ -33,32 +38,45 @@ func (pool ConnPool) ExecContext(ctx context.Context, query string, args ...any)
 	if table != "" {
 		if r, ok := pool.sharding.configs[table]; ok {
 			if r.DoubleWrite {
-				pool.ConnPool.ExecContext(ctx, ftQuery, args...)
+				pool.sharding.Logger.Trace(ctx, curTime, func() (sql string, rowsAffected int64) {
+					result, _ := pool.ConnPool.ExecContext(ctx, ftQuery, args...)
+					rowsAffected, _ = result.RowsAffected()
+					return pool.sharding.Explain(ftQuery, args...), rowsAffected
+				}, pool.sharding.Error)
 			}
 		}
 	}
 
-	return pool.ConnPool.ExecContext(ctx, stQuery, args...)
+	var result sql.Result
+	result, err = pool.ConnPool.ExecContext(ctx, stQuery, args...)
+	pool.sharding.Logger.Trace(ctx, curTime, func() (sql string, rowsAffected int64) {
+		rowsAffected, _ = result.RowsAffected()
+		return pool.sharding.Explain(stQuery, args...), rowsAffected
+	}, pool.sharding.Error)
+
+	return result, err
 }
 
 // https://github.com/go-gorm/gorm/blob/v1.21.11/callbacks/query.go#L18
 func (pool ConnPool) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	ftQuery, stQuery, table, err := pool.sharding.resolve(query, args...)
+	var (
+		curTime = time.Now()
+	)
+
+	_, stQuery, _, err := pool.sharding.resolve(query, args...)
 	if err != nil {
 		return nil, err
 	}
 
 	pool.sharding.querys.Store("last_query", stQuery)
 
-	if table != "" {
-		if r, ok := pool.sharding.configs[table]; ok {
-			if r.DoubleWrite {
-				pool.ConnPool.ExecContext(ctx, ftQuery, args...)
-			}
-		}
-	}
+	var rows *sql.Rows
+	rows, err = pool.ConnPool.QueryContext(ctx, stQuery, args...)
+	pool.sharding.Logger.Trace(ctx, curTime, func() (sql string, rowsAffected int64) {
+		return pool.sharding.Explain(stQuery, args...), 0
+	}, pool.sharding.Error)
 
-	return pool.ConnPool.QueryContext(ctx, stQuery, args...)
+	return rows, err
 }
 
 func (pool ConnPool) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
