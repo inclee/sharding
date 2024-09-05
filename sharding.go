@@ -104,8 +104,8 @@ type Config struct {
 }
 
 type ShardingTable struct {
-	table  any
-	config Config
+	Table  any
+	Config Config
 }
 
 func Register(config Config, tables ...any) *Sharding {
@@ -115,17 +115,21 @@ func Register(config Config, tables ...any) *Sharding {
 	}
 }
 
+func Default() *Sharding {
+	return &Sharding{}
+}
+
 func (s *Sharding) RegisterTable(shardingTables ...ShardingTable) error {
 	if s.configs == nil {
 		s.configs = make(map[string]Config)
 	}
 	for _, shardingTable := range shardingTables {
-		if t, ok := shardingTable.table.(string); ok {
-			s.configs[t] = shardingTable.config
+		if t, ok := shardingTable.Table.(string); ok {
+			s.configs[t] = shardingTable.Config
 		} else {
 			stmt := &gorm.Statement{DB: s.DB}
-			if err := stmt.Parse(shardingTable.table); err == nil {
-				s.configs[stmt.Table] = s._config
+			if err := stmt.Parse(shardingTable.Table); err == nil {
+				s.configs[stmt.Table] = shardingTable.Config
 			} else {
 				return err
 			}
