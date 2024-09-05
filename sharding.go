@@ -103,11 +103,35 @@ type Config struct {
 	PrimaryKeyGeneratorFn func(tableIdx int64) int64
 }
 
+type ShardingTable struct {
+	table  any
+	config Config
+}
+
 func Register(config Config, tables ...any) *Sharding {
 	return &Sharding{
 		_config: config,
 		_tables: tables,
 	}
+}
+
+func (s *Sharding) RegisterTable(shardingTables ...ShardingTable) error {
+	if s.configs == nil {
+		s.configs = make(map[string]Config)
+	}
+	for _, shardingTable := range shardingTables {
+		if t, ok := shardingTable.table.(string); ok {
+			s.configs[t] = shardingTable.config
+		} else {
+			stmt := &gorm.Statement{DB: s.DB}
+			if err := stmt.Parse(shardingTable.table); err == nil {
+				s.configs[stmt.Table] = s._config
+			} else {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (s *Sharding) compile() error {
